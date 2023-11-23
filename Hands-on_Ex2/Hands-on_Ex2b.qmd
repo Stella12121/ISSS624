@@ -2,7 +2,7 @@
 title: "Hands-on Exercise 2b: Global Measures of Spatial Autocorrelation"
 author: "Zhang Cunlei"
 date: "23 Nov 2023"
-date-modified: "last-modefied"
+date-modified: "last-modified"
 format: html
 execute: 
   echo: true
@@ -45,7 +45,7 @@ In this case study, we are interested to examine the spatial pattern of a select
 
 ### **1.2.2 The Study Area and Data**
 
-Two data sets will be used in this hands-on exercise, they are:
+Two data sets will be used:
 
 -   Hunan province administrative boundary layer at county level. This is a geospatial data set in ESRI shapefile format.
 
