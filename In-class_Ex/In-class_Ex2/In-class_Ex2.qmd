@@ -1,0 +1,129 @@
+---
+title: "In-class Exercise 2: Spatial Weights - sfdep method"
+author: "Zhang Cunlei"
+date: "25 Nov 2023"
+date-modified: "last-modified"
+format: html
+execute: 
+  echo: true
+  eval: true
+  warning: false
+editor: visual
+---
+
+## Getting Started
+
+### Installing and loading the R Packages
+
+```{r}
+pacman::p_load(sf, sfdep, tmap, tidyverse, knitr, plotly)
+```
+
+### The data
+
+Two data sets will be used:
+
+-   Hunan: a geospatial data set in ESRI shapefile format.
+
+-   Hunan_2012.csv: This csv file contains selected Hunan's local development indicators in 2012.
+
+#### Importing geospatial data
+
+The code chunk below uses [*st_read()*](https://r-spatial.github.io/sf/reference/st_read.html) of **sf** package to import Hunan shapefile into R. The imported shapefile will be **simple features** Object of **sf**.
+
+```{r}
+hunan <- st_read(dsn = "data/geospatial", 
+                 layer = "Hunan")
+```
+
+#### Importing attribute table
+
+Next, we will import *Hunan_2012.csv* into R by using *read_csv()* of **readr** package. The output is R dataframe class.
+
+```{r}
+hunan2012 <- read_csv("data/aspatial/Hunan_2012.csv")
+```
+
+#### Combining both data frame by using left join
+
+The code chunk below will be used to update the attribute table of *hunan*'s SpatialPolygonsDataFrame with the attribute fields of *hunan2012* dataframe. This is performed by using *left_join()* of **dplyr** package.
+
+```{r}
+hunan_GDPPC <- left_join(hunan,hunan2012)%>%
+  select(1:4, 7, 15)
+```
+
+::: call-out-important
+
+In order to retain the geopspatial properties, the left data frame must be the sf data frame
+
+### Deriving Contiguity Spatial Weights
+
+#### Deriving Contiguity Weights: Queen's method
+
+In the code chunk below, queen method is used to derive the contiguity weights.
+
+```{r}
+wm_q <- hunan_GDPPC %>%
+  mutate(nb = st_contiguity(geometry),
+         wt = st_weights(nb,
+                         style = "W"),
+         .before = 1)
+```
+
+### Computing local Moran's I
+
+In this section, we will learn how to compute local Moran's I of GDPPC at county level by using local_moran() of sfdep packages.
+
+```{r}
+lisa <- wm_q %>%
+  mutate(local_moran = local_moran(
+    GDPPC, nb, wt, nsim = 99),
+        .before = 1) %>%
+  unnest(local_moran)
+```
+
+### Creating a Time Series Cube
+
+#### The data
+
+```{r}
+GDPPC <- read_csv("data/aspatial/Hunan_GDPPC.csv")
+```
+
+In the code chunk below, spacetime() of sfdep is used to create an spacetime cube .
+
+```{r}
+GDPPC_st <- spacetime(GDPPC, hunan,
+                      .loc_col = "County",
+                      .time_col = "Year")
+```
+
+the code chunk below will be used to identify neighbors and to derive an inverse distance weights.
+
+```{r}
+GDPPC_nb <- GDPPC_st %>%
+  activate("geometry") %>%
+  mutate(nb = 
+           include_self(st_contiguity()))
+```
+
+#### Computing Gi\*
+
+we can use these new columns to manually calculate the local Gi\* for each location. We can do this by grouping by *Year* and using `local_gstar_prem()` of sfdep package. After which, we use `unnest()` to unnest *gi_star* column of the newly created *gi_stars* data.frame.
+
+```{r}
+gi_star <- GDPPC_nb %>%
+  group_by(Year) %>%
+  mutate(gi_star = local_gstar_perm(
+    GDPPC, nb, wt)) %>%
+  tidyr::unnest(gi_star)
+```
+
+Visualising EHSA
+
+```{r}
+ehsa_sig <- hunan_ehsa %>%
+  filter(p_value < 0.05)
+tmap_mode()
+```
