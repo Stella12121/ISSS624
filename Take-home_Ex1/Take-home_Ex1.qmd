@@ -1,0 +1,272 @@
+---
+title: "Take home Exercise 1: Geospatial Analytics for Public Good"
+author: "Zhang Cunlei"
+date: "28 Nov 2023"
+date-modified: "last-modified"
+format: html
+execute: 
+  echo: true
+  eval: true
+  warning: false
+editor: visual
+---
+
+## 1 Overview
+
+With the recent trend of massive deployment of pervasive computing technologies such as GPS and RFID on the vehicles, city-wide urban infrastructures such as buses, taxis, mass rapid transit, public utilities and roads become digital. The datasets obtained are likely to contain structure and patterns that provide useful information about characteristics of the measured phenomena. These will potentially contribute to a better urban management and useful information for urban transport services providers both from the private and public sector to formulate informed decision to gain competitive advantage.
+
+## 2 Objective
+
+However, in real-world practice, the use of these data tend to be confined to simple tracking and mapping with GPS applications. Exploratory Spatial Data Analysis (ESDA) hold tremendous potential to address complex problems facing society. In this exercise, we will apply appropriate Local Indicators of Spatial Association (GLISA) to undercover the spatial and spatio-temporal mobility patterns of public bus passengers in Singapore.
+
+## 3 Getting Started
+
+### 3.1 Loading R packages
+
+The code chunk below installs and loads `sf`, `sfdep`, `tmap`, `tidyverse`, `knitr`, `dplyr`, `mapview`, `readr` packages into R environment.
+
+```{r}
+pacman::p_load(sf, sfdep, tmap, tidyverse, knitr, dplyr, mapview, readr)
+```
+
+### 3.2 The data
+
+In this study, three datasets will be used:
+
+-   Aspatial data: *Passenger Volume by Origin Destination Bus Stops* downloaded from [LTA DataMall](https://datamall.lta.gov.sg/content/datamall/en.html).
+
+-   Geospatial data:
+
+    -   *Bus Stop Location* from LTA DataMall. It provides information about all the bus stops currently being serviced by buses, including the bus stop code (identifier) and location coordinates.
+
+    -   *hexagon*, a [hexagon](https://desktop.arcgis.com/en/arcmap/latest/tools/spatial-statistics-toolbox/h-whyhexagons.htm) layer of 250m (this distance is the perpendicular distance between the centre of the hexagon and its edges.) should be used to replace the relative coarse and irregular Master Plan 2019 Planning Sub-zone GIS data set of URA.
+
+### **3.3 Importing the aspatial data**
+
+Firstly, we will import the *Passenger Volume by Origin Destination Bus Stops* data set downloaded from LTA DataMall by using `read_csv()` of **readr** package. Since there are three months of data, we choose only one of them to perform our analysis.
+
+```{r}
+odbus <- read_csv("data/aspatial/origin_destination_bus_202308.csv")
+```
+
+Then, we use *glimpse() to* check of odbus tibble data frame.
+
+```{r}
+glimpse(odbus)
+```
+
+Using appropriate tidyverse functions to convert these data values into factor data type.
+
+```{r}
+odbus$ORIGIN_PT_CODE <- as.factor(odbus$ORIGIN_PT_CODE)
+odbus$DESTINATION_PT_CODE <- as.factor(odbus$DESTINATION_PT_CODE) 
+```
+
+Notice that both of them are in factor data type now.
+
+```{r}
+glimpse(odbus)
+```
+
+### 3.4 Importing the geospatial data
+
+```{r}
+busstop <- st_read(dsn = "data/geospatial",
+                   layer = "BusStop") %>%
+  st_transform(crs = 3414)
+```
+
+The structure of `busstop` sf tibble data frame looks as below.
+
+```{r}
+glimpse(busstop)
+```
+
+## 4 Data wrangling
+
+### 4.1 create hexagon grids
+
+```{r}
+mapview_test_points = mapview(busstop, cex = 3, alpha = .5, popup = NULL)
+
+mapview_test_points
+```
+
+Next, we will create a grid which the extent equals to the bounding box of the selected points(busstop) and count the number of points(busstop) in each grid.
+
+```{r}
+#| code-fold: true
+#| code-summary: "Show the code"
+area_honeycomb_grid = st_make_grid(busstop, c(250, 250), what = "polygons", square = FALSE)
+
+# To sf and add grid ID
+honeycomb_grid_sf = st_sf(area_honeycomb_grid) %>%
+  # add grid ID
+  mutate(grid_id = 1:length(lengths(area_honeycomb_grid)))
+
+# count number of points in each grid
+honeycomb_grid_sf$n_busstop = lengths(st_intersects(honeycomb_grid_sf, busstop))
+
+# remove grid without value of 0 (i.e. no points in side that grid)
+honeycomb_count = filter(honeycomb_grid_sf, n_busstop > 0)
+```
+
+Then, plot the grid into an interactive thematic map with `tmap`.
+
+```{r}
+#| code-fold: true
+#| code-summary: "Show the code"
+tmap_mode("view")
+
+map_honeycomb = tm_shape(honeycomb_count) +
+  tm_fill(
+    col = "n_busstop",
+    palette = "Reds",
+    style = "cont",
+    title = "Number of busstop",
+    id = "grid_id",
+    showNA = FALSE,
+    alpha = 0.6,
+    popup.vars = c(
+      "Number of busstop: " = "n_busstop"
+    ),
+    popup.format = list(
+      n_busstop = list(format = "f", digits = 0)
+    )
+  ) +
+  tm_borders(col = "grey40", lwd = 0.7)
+
+map_honeycomb
+```
+
+### 4.2 Extracting the study data
+
+For the purpose of this exercise, we will extract commuting flows during the weekday morning peak, weekday afternoon peak, weekend/holiday morning peak and evening peak with the reference to the time intervals provided in the table below.
+
+![](images/peak_time.png){fig-align="center"}
+
+Then, we use *filter()* function to extract the data.
+
+::: panel-tabset
+### weekday morning peak
+
+```{r}
+origin6_9 <- odbus %>%
+  filter(DAY_TYPE == "WEEKDAY") %>%
+  filter(TIME_PER_HOUR >= 6 &
+           TIME_PER_HOUR <= 9) %>%
+  group_by(ORIGIN_PT_CODE) %>%
+  summarise(TRIPS = sum(TOTAL_TRIPS))
+```
+
+### weekday afternoon peak
+
+```{r}
+origin17_20 <- odbus %>%
+  filter(DAY_TYPE == "WEEKDAY") %>%
+  filter(TIME_PER_HOUR >= 17 &
+           TIME_PER_HOUR <= 20) %>%
+  group_by(ORIGIN_PT_CODE) %>%
+  summarise(TRIPS = sum(TOTAL_TRIPS))
+```
+
+### weekend/holiday morning peak
+
+```{r}
+origin11_14 <- odbus %>%
+  filter(DAY_TYPE == "WEEKENDS/HOLIDAY") %>%
+  filter(TIME_PER_HOUR >= 11 &
+           TIME_PER_HOUR <= 14) %>%
+  group_by(ORIGIN_PT_CODE) %>%
+  summarise(TRIPS = sum(TOTAL_TRIPS))
+```
+
+### weekend/holiday evening peak
+
+```{r}
+origin16_19 <- odbus %>%
+  filter(DAY_TYPE == "WEEKENDS/HOLIDAY") %>%
+  filter(TIME_PER_HOUR >= 16 &
+           TIME_PER_HOUR <= 19) %>%
+  group_by(ORIGIN_PT_CODE) %>%
+  summarise(TRIPS = sum(TOTAL_TRIPS))
+```
+:::
+
+It should look similar to the data table below.
+
+```{r}
+kable(head(origin6_9))
+```
+
+We will save the output in rds format for future used.
+
+::: panel-tabset
+### weekday morning peak
+
+```{r}
+write_rds(origin6_9, "data/rds/origin6_9.rds")
+```
+
+### weekday afternoon peak
+
+```{r}
+write_rds(origin17_20, "data/rds/origin17_20.rds")
+```
+
+### weekend/holiday morning peak
+
+```{r}
+write_rds(origin11_14, "data/rds/origin11_14.rds")
+```
+
+### weekend/holiday evening peak
+
+```{r}
+write_rds(origin16_19, "data/rds/origin16_19.rds")
+```
+:::
+
+The code chunk below will be used to import the save those rds files into R environment.
+
+::: panel-tabset
+### weekday morning peak
+
+```{r}
+origin6_9 <- read_rds("data/rds/origin6_9.rds")
+```
+
+### weekday afternoon peak
+
+```{r}
+origin17_20 <- read_rds("data/rds/origin17_20.rds")
+```
+
+### weekend/holiday morning peak
+
+```{r}
+origin11_14 <- read_rds("data/rds/origin11_14.rds")
+```
+
+### weekend/holiday evening peak
+
+```{r}
+origin16_19 <- read_rds("data/rds/origin16_19.rds")
+```
+:::
+
+### 4.3 Combine the data
+
+```{r}
+origin_SZ <- left_join(origin6_9, busstop, by = c("ORIGIN_PT_CODE" = "BUS_STOP_N")) %>%
+  rename(ORIGIN_BS = ORIGIN_PT_CODE, ORIGIN_SZ = LOC_DESC) %>%
+  filter(!is.na(ORIGIN_SZ)) %>%  # Remove NA values from ORIGIN_SZ
+  distinct(ORIGIN_SZ, .keep_all = TRUE) %>%  # Remove duplicates in ORIGIN_SZ
+  group_by(ORIGIN_SZ) %>%
+  mutate(TOT_TRIPS = sum(TRIPS))
+
+```
+
+```{r}
+glimpse(origin_SZ)
+```
