@@ -26,7 +26,7 @@ However, in real-world practice, the use of these data tend to be confined to si
 The code chunk below installs and loads `sf`, `sfdep`, `tmap`, `tidyverse`, `knitr`, `dplyr`, `mapview`, `readr` packages into R environment.
 
 ```{r}
-pacman::p_load(sf, sfdep, tmap, tidyverse, knitr, dplyr, mapview, readr)
+pacman::p_load(sf, sfdep, tmap, tidyverse, knitr, dplyr, readr)
 ```
 
 ### 3.2 The data
@@ -55,7 +55,7 @@ Then, we use *glimpse() to* check of odbus tibble data frame.
 glimpse(odbus)
 ```
 
-We can see that column ORIGIN_PT_CODE and DESTINATION_PT_CODE are in chr data type. For further processing, we should use appropriate tidyverse functions to convert these data values into factor data type.
+We can see that column ORIGIN_PT_CODE and DESTINATION_PT_CODE are in chr data type. For further processing, we should convert these data values into factor data type.
 
 ```{r}
 odbus$ORIGIN_PT_CODE <- as.factor(odbus$ORIGIN_PT_CODE)
@@ -93,15 +93,63 @@ busstop <- busstop %>% rename(ORIGIN_PT_CODE = BUS_STOP_N)
 
 ## 4 Data wrangling
 
-### 4.1 create hexagon grids
+### 4.1 Extracting the study data
+
+For the purpose of this exercise, we will extract commuting flows during the weekday morning peak, weekday afternoon peak, weekend/holiday morning peak and evening peak with the reference to the time intervals provided in the table below.
+
+![](images/peak_time.png){fig-align="center"}
+
+Then, we use *filter()* function to extract the data according to the required period.
+
+::: panel-tabset
+### weekday morning peak
 
 ```{r}
-mapview_test_points = mapview(busstop, cex = 3, alpha = .5, popup = NULL)
-
-mapview_test_points
+origin6_9 <- odbus %>%
+  filter(DAY_TYPE == "WEEKDAY") %>%
+  filter(TIME_PER_HOUR >= 6 &
+           TIME_PER_HOUR <= 9) %>%
+  group_by(ORIGIN_PT_CODE) %>%
+  summarise(TRIPS = sum(TOTAL_TRIPS))
 ```
 
-Next, we will create a grid which the extent equals to the bounding box of the selected points(busstop) and count the number of points(busstop) in each grid.
+### weekday afternoon peak
+
+```{r}
+origin17_20 <- odbus %>%
+  filter(DAY_TYPE == "WEEKDAY") %>%
+  filter(TIME_PER_HOUR >= 17 &
+           TIME_PER_HOUR <= 20) %>%
+  group_by(ORIGIN_PT_CODE) %>%
+  summarise(TRIPS = sum(TOTAL_TRIPS))
+```
+
+### weekend/holiday morning peak
+
+```{r}
+origin11_14 <- odbus %>%
+  filter(DAY_TYPE == "WEEKENDS/HOLIDAY") %>%
+  filter(TIME_PER_HOUR >= 11 &
+           TIME_PER_HOUR <= 14) %>%
+  group_by(ORIGIN_PT_CODE) %>%
+  summarise(TRIPS = sum(TOTAL_TRIPS))
+```
+
+### weekend/holiday evening peak
+
+```{r}
+origin16_19 <- odbus %>%
+  filter(DAY_TYPE == "WEEKENDS/HOLIDAY") %>%
+  filter(TIME_PER_HOUR >= 16 &
+           TIME_PER_HOUR <= 19) %>%
+  group_by(ORIGIN_PT_CODE) %>%
+  summarise(TRIPS = sum(TOTAL_TRIPS))
+```
+:::
+
+### 4.2 Combining busstop and hexagon layer
+
+First, using *st_make_grid()* to create the hexagon layer.
 
 ```{r}
 #| code-fold: true
@@ -112,96 +160,235 @@ area_honeycomb_grid = st_make_grid(busstop, cellsize = 500, what = "polygons", s
 honeycomb_grid_sf = st_sf(area_honeycomb_grid) %>%
   # add grid ID
   mutate(grid_id = 1:length(lengths(area_honeycomb_grid)))
-
-# count number of points in each grid
-honeycomb_grid_sf$n_busstop = lengths(st_intersects(honeycomb_grid_sf, busstop))
-
-# remove grid without value of 0 (i.e. no points in side that grid)
-honeycomb_count = filter(honeycomb_grid_sf, n_busstop > 0)
 ```
 
-Then, plot the grid into an interactive thematic map with `tmap`.
+::: callout-note
+For hexagonal cells, cellsize is defined as the distance between opposite edges. In this case, we should use 250\*2 = 500
+:::
+
+Second, we populate the planning grid_id of honeycomb_grid_sf sf data frame into busstop sf data frame.
+
+```{r}
+busstop_grid <- st_intersection(busstop, honeycomb_grid_sf) %>%
+  select(ORIGIN_PT_CODE, grid_id) %>%
+  st_drop_geometry()
+```
+
+::: callout-note
+-   `st_intersection()` is used to perform point and polygon overly and the output will be in point sf object.
+
+-   `select()` of dplyr package is then use to retain only ORIGIN_PT_CODE and grid_id in the busstop_grid sf data frame.
+
+-   five bus stops are excluded in the resultant data frame because they are outside of Singapore bpundary.
+:::
+
+Third,we are going to append the grid_id from busstop_grid data frame onto origin6_9, origin17_20, origin11_14 and origin16_19 data frame seperately.
+
+::: panel-tabset
+### weekday morning peak
+
+```{r}
+origin_WM <- left_join(origin6_9 , busstop_grid,
+            by = "ORIGIN_PT_CODE" ) %>%
+  rename(ORIGIN_BS = ORIGIN_PT_CODE,
+         ORIGIN_SZ = grid_id) %>%
+  group_by(ORIGIN_SZ, ORIGIN_BS) %>%
+  summarise(TOT_TRIPS = sum(TRIPS))
+```
+
+### weekday afternoon peak
+
+```{r}
+origin_WA <- left_join(origin17_20 , busstop_grid,
+            by = "ORIGIN_PT_CODE" ) %>%
+  rename(ORIGIN_BS = ORIGIN_PT_CODE,
+         ORIGIN_SZ = grid_id) %>%
+  group_by(ORIGIN_SZ, ORIGIN_BS) %>%
+  summarise(TOT_TRIPS = sum(TRIPS))
+```
+
+### weekend/holiday morning peak
+
+```{r}
+origin_WHM <- left_join(origin11_14 , busstop_grid,
+            by = "ORIGIN_PT_CODE" ) %>%
+  rename(ORIGIN_BS = ORIGIN_PT_CODE,
+         ORIGIN_SZ = grid_id) %>%
+  group_by(ORIGIN_SZ, ORIGIN_BS) %>%
+  summarise(TOT_TRIPS = sum(TRIPS))
+```
+
+### weekend/holiday evening peak
+
+```{r}
+origin_WHE <- left_join(origin16_19 , busstop_grid,
+            by = "ORIGIN_PT_CODE" ) %>%
+  rename(ORIGIN_BS = ORIGIN_PT_CODE,
+         ORIGIN_SZ = grid_id) %>%
+  group_by(ORIGIN_SZ, ORIGIN_BS) %>%
+  summarise(TOT_TRIPS = sum(TRIPS))
+```
+:::
+
+Before continue, it is a good to check for duplicating records.
+
+```{r}
+duplicate_1 <- origin_WM %>%
+  group_by_all() %>%
+  filter(n()>1) %>%
+  ungroup()
+
+duplicate_2 <- origin_WA %>%
+  group_by_all() %>%
+  filter(n()>1) %>%
+  ungroup()
+
+duplicate_3 <- origin_WHM %>%
+  group_by_all() %>%
+  filter(n()>1) %>%
+  ungroup()
+
+duplicate_4 <- origin_WHE %>%
+  group_by_all() %>%
+  filter(n()>1) %>%
+  ungroup()
+```
+
+If duplicated records are found, the code chunk below will be used to retain the unique records.
+
+```{r}
+origin_WM <- unique(origin_WM)
+origin_WA <- unique(origin_WA)
+origin_WHM <- unique(origin_WHM)
+origin_WHE <- unique(origin_WHE)
+```
+
+Lastly,
+
+```{r}
+origintrip_hexagon_WM <- left_join(honeycomb_grid_sf, 
+                           origin_WM,
+                           by = c("grid_id" = "ORIGIN_SZ"))
+
+origintrip_hexagon_WA <- left_join(honeycomb_grid_sf, 
+                           origin_WA,
+                           by = c("grid_id" = "ORIGIN_SZ"))
+
+origintrip_hexagon_WHM <- left_join(honeycomb_grid_sf, 
+                           origin_WHM,
+                           by = c("grid_id" = "ORIGIN_SZ"))
+
+origintrip_hexagon_WHE <- left_join(honeycomb_grid_sf, 
+                           origin_WHE,
+                           by = c("grid_id" = "ORIGIN_SZ"))
+```
+
+Using *filter()* to drop the NA in dataset.
+
+```{r}
+origintrip_hexagon_WM = filter(origintrip_hexagon_WM, TOT_TRIPS > 0)
+origintrip_hexagon_WA = filter(origintrip_hexagon_WA, TOT_TRIPS > 0)
+origintrip_hexagon_WHM = filter(origintrip_hexagon_WHM, TOT_TRIPS > 0)
+origintrip_hexagon_WHE = filter(origintrip_hexagon_WHE, TOT_TRIPS > 0)
+```
+
+## 5 Geographical distribution of the passenger trips
+
+In this section, we will plot the grid into an interactive thematic map with `tmap`.
+
+### 5.1 weekday morning peak
 
 ```{r}
 #| code-fold: true
 #| code-summary: "Show the code"
 tmap_mode("view")
+tmap_options(check.and.fix = TRUE)
+tm_shape(origintrip_hexagon_WM)+
+  tm_fill("TOT_TRIPS", 
+          style = "quantile", 
+          palette = "Blues",
+          title = "Total_trips of weekday morning trip") +
+  tm_layout(main.title = "Passenger trips generated at hexagon level",
+            main.title.position = "center",
+            main.title.size = 1.2,
+            legend.height = 0.45, 
+            legend.width = 0.35,
+            frame = TRUE) +
+  tm_borders(alpha = 0.5) +
+  tm_compass(type="8star", size = 2) +
+  tm_scale_bar() +
+  tm_grid(alpha =0.2) 
 
-map_honeycomb = tm_shape(honeycomb_count) +
-  tm_fill(
-    col = "n_busstop",
-    palette = "Reds",
-    style = "cont",
-    title = "Number of busstop",
-    id = "grid_id",
-    showNA = FALSE,
-    alpha = 0.6,
-    popup.vars = c(
-      "Number of busstop: " = "n_busstop"
-    ),
-    popup.format = list(
-      n_busstop = list(format = "f", digits = 0)
-    )
-  ) +
-  tm_borders(col = "grey40", lwd = 0.7)
-
-map_honeycomb
 ```
 
-### 4.2 Extracting the study data
-
-For the purpose of this exercise, we will extract commuting flows during the weekday morning peak, weekday afternoon peak, weekend/holiday morning peak and evening peak with the reference to the time intervals provided in the table below.
-
-![](images/peak_time.png){fig-align="center"}
-
-Then, we use *filter()* function to extract the data.
+### 5.2 weekday afternoon peak
 
 ```{r}
-odbus_peak <- odbus %>%
-  mutate(Peak_Type = ifelse(DAY_TYPE == "WEEKDAY" & 
-                         TIME_PER_HOUR >= 6 & TIME_PER_HOUR <= 9, 
-                         "Weekday morning peak",
-                    ifelse(DAY_TYPE == "WEEKDAY" & 
-                           TIME_PER_HOUR >= 17 & TIME_PER_HOUR <= 20,
-                           "Weekday evening peak",
-                      ifelse(DAY_TYPE == "WEEKENDS/HOLIDAY" &
-                             TIME_PER_HOUR >= 11 & TIME_PER_HOUR <= 14,
-                              "Weekend/PH morning peak",
-                        ifelse(DAY_TYPE == "WEEKENDS/HOLIDAY" & 
-                              TIME_PER_HOUR >= 16 & TIME_PER_HOUR <= 19,
-                               "Weekend/PH evening peak",
-                    "Not_Peak"))))
-  ) %>%
-  filter(
-    Peak_Type != "Not_Peak"
-  ) %>%
-  group_by(
-    YEAR_MONTH,
-    Peak_Type,
-    ORIGIN_PT_CODE
-  ) %>%
-  summarise(
-    num_trips = sum(TOTAL_TRIPS)
-  ) %>%
-  ungroup() %>%
-    pivot_wider(
-    names_from = Peak_Type,
-    values_from = num_trips
-  )
+#| code-fold: true
+#| code-summary: "Show the code"
+tmap_mode("view")
+tmap_options(check.and.fix = TRUE)
+tm_shape(origintrip_hexagon_WA)+
+  tm_fill("TOT_TRIPS", 
+          style = "quantile", 
+          palette = "Blues",
+          title = "Total_trips of weekday afternoon trip") +
+  tm_layout(main.title = "Passenger trips generated at hexagon level",
+            main.title.position = "center",
+            main.title.size = 1.2,
+            legend.height = 0.45, 
+            legend.width = 0.35,
+            frame = TRUE) +
+  tm_borders(alpha = 0.5) +
+  tm_compass(type="8star", size = 2) +
+  tm_scale_bar() +
+  tm_grid(alpha =0.2) 
 ```
 
-### 4.3 Combine the data
-
-Using left_join() to combine the two dataset.
+### 5.3 weekend/holiday morning peak
 
 ```{r}
-busstop_trips <- left_join(busstop, odbus_peak, by = "ORIGIN_PT_CODE")
+#| code-fold: true
+#| code-summary: "Show the code"
+tmap_mode("view")
+tmap_options(check.and.fix = TRUE)
+tm_shape(origintrip_hexagon_WHM)+
+  tm_fill("TOT_TRIPS", 
+          style = "quantile", 
+          palette = "Blues",
+          title = "Total_trips of weekend/holiday morning peak") +
+  tm_layout(main.title = "Passenger trips generated at hexagon level",
+            main.title.position = "center",
+            main.title.size = 1.2,
+            legend.height = 0.45, 
+            legend.width = 0.35,
+            frame = TRUE) +
+  tm_borders(alpha = 0.5) +
+  tm_compass(type="8star", size = 2) +
+  tm_scale_bar() +
+  tm_grid(alpha =0.2) 
 ```
 
-First, check the distribution of busstop by using mapview
+### 5.4 weekend/holiday evening peak
 
 ```{r}
-mapview_busstop = mapview(busstop_trips, cex = 3, alpha = .5, popup = NULL)
-
-mapview_busstop
+#| code-fold: true
+#| code-summary: "Show the code"
+tmap_mode("view")
+tmap_options(check.and.fix = TRUE)
+tm_shape(origintrip_hexagon_WHE)+
+  tm_fill("TOT_TRIPS", 
+          style = "quantile", 
+          palette = "Blues",
+          title = "Total_trips of weekend/holiday evening peak") +
+  tm_layout(main.title = "Passenger trips generated at hexagon level",
+            main.title.position = "center",
+            main.title.size = 1.2,
+            legend.height = 0.45, 
+            legend.width = 0.35,
+            frame = TRUE) +
+  tm_borders(alpha = 0.5) +
+  tm_compass(type="8star", size = 2) +
+  tm_scale_bar() +
+  tm_grid(alpha =0.2) 
 ```
