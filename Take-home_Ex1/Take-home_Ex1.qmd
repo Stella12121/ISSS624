@@ -55,7 +55,7 @@ Then, we use *glimpse() to* check of odbus tibble data frame.
 glimpse(odbus)
 ```
 
-Using appropriate tidyverse functions to convert these data values into factor data type.
+We can see that column ORIGIN_PT_CODE and DESTINATION_PT_CODE are in chr data type. For further processing, we should use appropriate tidyverse functions to convert these data values into factor data type.
 
 ```{r}
 odbus$ORIGIN_PT_CODE <- as.factor(odbus$ORIGIN_PT_CODE)
@@ -70,6 +70,8 @@ glimpse(odbus)
 
 ### 3.4 Importing the geospatial data
 
+According to [epsg.io](https://epsg.io/?q=Singapore), Singapore's coordinate system is **SVY21** with **EPSG 3414.** So we needto re-assign EPSG to 3414 by using *st_transform()*.
+
 ```{r}
 busstop <- st_read(dsn = "data/geospatial",
                    layer = "BusStop") %>%
@@ -80,6 +82,13 @@ The structure of `busstop` sf tibble data frame looks as below.
 
 ```{r}
 glimpse(busstop)
+```
+
+Rename the column 'BUS_STOP_N' to 'ORIGIN_PT_CODE' for easy join with `odbus` dataset.
+
+```{r}
+busstop <- busstop %>% rename(ORIGIN_PT_CODE = BUS_STOP_N)
+
 ```
 
 ## 4 Data wrangling
@@ -97,7 +106,7 @@ Next, we will create a grid which the extent equals to the bounding box of the s
 ```{r}
 #| code-fold: true
 #| code-summary: "Show the code"
-area_honeycomb_grid = st_make_grid(busstop, c(250, 250), what = "polygons", square = FALSE)
+area_honeycomb_grid = st_make_grid(busstop, cellsize = 500, what = "polygons", square = FALSE)
 
 # To sf and add grid ID
 honeycomb_grid_sf = st_sf(area_honeycomb_grid) %>%
@@ -147,126 +156,52 @@ For the purpose of this exercise, we will extract commuting flows during the wee
 
 Then, we use *filter()* function to extract the data.
 
-::: panel-tabset
-### weekday morning peak
-
 ```{r}
-origin6_9 <- odbus %>%
-  filter(DAY_TYPE == "WEEKDAY") %>%
-  filter(TIME_PER_HOUR >= 6 &
-           TIME_PER_HOUR <= 9) %>%
-  group_by(ORIGIN_PT_CODE) %>%
-  summarise(TRIPS = sum(TOTAL_TRIPS))
+odbus_peak <- odbus %>%
+  mutate(Peak_Type = ifelse(DAY_TYPE == "WEEKDAY" & 
+                         TIME_PER_HOUR >= 6 & TIME_PER_HOUR <= 9, 
+                         "Weekday morning peak",
+                    ifelse(DAY_TYPE == "WEEKDAY" & 
+                           TIME_PER_HOUR >= 17 & TIME_PER_HOUR <= 20,
+                           "Weekday evening peak",
+                      ifelse(DAY_TYPE == "WEEKENDS/HOLIDAY" &
+                             TIME_PER_HOUR >= 11 & TIME_PER_HOUR <= 14,
+                              "Weekend/PH morning peak",
+                        ifelse(DAY_TYPE == "WEEKENDS/HOLIDAY" & 
+                              TIME_PER_HOUR >= 16 & TIME_PER_HOUR <= 19,
+                               "Weekend/PH evening peak",
+                    "Not_Peak"))))
+  ) %>%
+  filter(
+    Peak_Type != "Not_Peak"
+  ) %>%
+  group_by(
+    YEAR_MONTH,
+    Peak_Type,
+    ORIGIN_PT_CODE
+  ) %>%
+  summarise(
+    num_trips = sum(TOTAL_TRIPS)
+  ) %>%
+  ungroup() %>%
+    pivot_wider(
+    names_from = Peak_Type,
+    values_from = num_trips
+  )
 ```
-
-### weekday afternoon peak
-
-```{r}
-origin17_20 <- odbus %>%
-  filter(DAY_TYPE == "WEEKDAY") %>%
-  filter(TIME_PER_HOUR >= 17 &
-           TIME_PER_HOUR <= 20) %>%
-  group_by(ORIGIN_PT_CODE) %>%
-  summarise(TRIPS = sum(TOTAL_TRIPS))
-```
-
-### weekend/holiday morning peak
-
-```{r}
-origin11_14 <- odbus %>%
-  filter(DAY_TYPE == "WEEKENDS/HOLIDAY") %>%
-  filter(TIME_PER_HOUR >= 11 &
-           TIME_PER_HOUR <= 14) %>%
-  group_by(ORIGIN_PT_CODE) %>%
-  summarise(TRIPS = sum(TOTAL_TRIPS))
-```
-
-### weekend/holiday evening peak
-
-```{r}
-origin16_19 <- odbus %>%
-  filter(DAY_TYPE == "WEEKENDS/HOLIDAY") %>%
-  filter(TIME_PER_HOUR >= 16 &
-           TIME_PER_HOUR <= 19) %>%
-  group_by(ORIGIN_PT_CODE) %>%
-  summarise(TRIPS = sum(TOTAL_TRIPS))
-```
-:::
-
-It should look similar to the data table below.
-
-```{r}
-kable(head(origin6_9))
-```
-
-We will save the output in rds format for future used.
-
-::: panel-tabset
-### weekday morning peak
-
-```{r}
-write_rds(origin6_9, "data/rds/origin6_9.rds")
-```
-
-### weekday afternoon peak
-
-```{r}
-write_rds(origin17_20, "data/rds/origin17_20.rds")
-```
-
-### weekend/holiday morning peak
-
-```{r}
-write_rds(origin11_14, "data/rds/origin11_14.rds")
-```
-
-### weekend/holiday evening peak
-
-```{r}
-write_rds(origin16_19, "data/rds/origin16_19.rds")
-```
-:::
-
-The code chunk below will be used to import the save those rds files into R environment.
-
-::: panel-tabset
-### weekday morning peak
-
-```{r}
-origin6_9 <- read_rds("data/rds/origin6_9.rds")
-```
-
-### weekday afternoon peak
-
-```{r}
-origin17_20 <- read_rds("data/rds/origin17_20.rds")
-```
-
-### weekend/holiday morning peak
-
-```{r}
-origin11_14 <- read_rds("data/rds/origin11_14.rds")
-```
-
-### weekend/holiday evening peak
-
-```{r}
-origin16_19 <- read_rds("data/rds/origin16_19.rds")
-```
-:::
 
 ### 4.3 Combine the data
 
-```{r}
-origin_SZ <- left_join(origin6_9, busstop, by = c("ORIGIN_PT_CODE" = "BUS_STOP_N")) %>%
-  rename(ORIGIN_BS = ORIGIN_PT_CODE, ORIGIN_SZ = LOC_DESC) %>%
-  filter(!is.na(ORIGIN_SZ)) %>%  # Remove NA values from ORIGIN_SZ
-  distinct(ORIGIN_SZ, .keep_all = TRUE) %>%  # Remove duplicates in ORIGIN_SZ
-  group_by(ORIGIN_SZ) %>%
-  mutate(TOT_TRIPS = sum(TRIPS))
+Using left_join() to combine the two dataset.
 
+```{r}
+busstop_trips <- left_join(busstop, odbus_peak, by = "ORIGIN_PT_CODE")
 ```
 
+First, check the distribution of busstop by using mapview
+
 ```{r}
-glimpse(origin_SZ)
+mapview_busstop = mapview(busstop_trips, cex = 3, alpha = .5, popup = NULL)
+
+mapview_busstop
 ```
