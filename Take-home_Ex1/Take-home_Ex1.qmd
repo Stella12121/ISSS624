@@ -228,7 +228,7 @@ origin_WHE <- left_join(origin16_19 , busstop_grid,
 ```
 :::
 
-Before continue, it is a good to check for duplicating records.
+Before continue, it is good to check for duplicating records.
 
 ```{r}
 duplicate_1 <- origin_WM %>%
