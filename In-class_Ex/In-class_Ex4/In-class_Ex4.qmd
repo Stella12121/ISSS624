@@ -1,0 +1,437 @@
+---
+title: "In-class Exercise 4: Calibrating Spatial Interaction Models with R"
+author: "Zhang Cunlei"
+date: "10 Dec 2023"
+date-modified: "last-modified"
+format: html
+execute: 
+  echo: true
+  eval: true
+  warning: false
+editor: visual
+---
+
+## Overview
+
+A healthy baby need healthy food. Likewise, a well calibrated Spatial Interaction Model need conceptually logical and well prepared propulsiveness and attractiveness variables. In this in-class exercise, you will gain hands-on experience on preparing propulsiveness and attractiveness variables require for calibrating spatial interaction models. By the end of this in-class exercise, you will be able to:
+
+-   perform geocoding by using SLA OneMap API,
+
+-   convert an aspatial data into a simple feature tibble data.frame,
+
+-   perform point-in-polygon count analysis, and
+
+-   append the propulsiveness and attractiveness variables onto a flow data.
+
+## Getting Started
+
+To get start, the following R packages will be loaded into R environment. They are:
+
+-   **sf** for importing, integrating, processing and transforming geospatial data.
+
+-   **tidyverse** for importing, integrating, wrangling and visualising data.
+
+-   **tmap** for plotting cartographicquality thematic maps.
+
+-   [performance](https://easystats.github.io/performance/) for computing model comparison matrices such as rmse.
+
+-   [ggpubr](https://rpkgs.datanovia.com/ggpubr/) for creating publication quality statistical graphics.
+
+```{r}
+pacman::p_load(tmap, httr, tidyverse, sf, performance, knitr,
+               AER, MASS, ggpubr, readr, dplyr,
+               epiDisplay)
+```
+
+## **Counting number of schools in each URA Planning Subzone**
+
+### **Downloading General information of schools data from data.gov.sg**
+
+To get started, you are required to download *General information of schools* data set of School Directory and Information from [data.gov.sg](https://beta.data.gov.sg/).
+
+### Geocoding using SLA API
+
+Address geocoding, or simply geocoding, is the process of taking a aspatial description of a location, such as an address or postcode, and returning geographic coordinates, frequently latitude/longitude pair, to identify a location on the Earth's surface.
+
+Singapore Land Authority (SLA) supports an online geocoding service called [OneMap API](https://www.onemap.gov.sg/apidocs/). The [Search](https://www.onemap.gov.sg/apidocs/apidocs) API looks up the address data or 6-digit postal code for an entered value. It then returns both latitude, longitude and x,y coordinates of the searched location.
+
+The code chunks below will perform geocoding using [SLA OneMap API](https://www.onemap.gov.sg/docs/#onemap-rest-apis). The input data will be in csv file format. It will be read into R Studio environment using *read_csv* function of **readr** package. A collection of http call functions of **httr** package of R will then be used to pass the individual records to the geocoding server at OneMap.
+
+Two tibble data.frames will be created if the geocoding process completed successfully. They are called `found` and `not_found`. `found` contains all records that are geocoded correctly and `not_found` contains postal that failed to be geocoded.
+
+Lastly, the found data table will joined with the initial csv data table by using a unique identifier (i.e. POSTAL) common to both data tables. The output data table will then save as an csv file called `found`.
+
+```{r}
+#| eval: false
+url<-"https://www.onemap.gov.sg/api/common/elastic/search"
+
+csv<-read_csv("data/aspatial/Generalinformationofschools.csv")
+postcodes<-csv$`postal_code`
+
+found<-data.frame()
+not_found<-data.frame()
+
+for(postcode in postcodes){
+  query<-list('searchVal'=postcode,'returnGeom'='Y','getAddrDetails'='Y','pageNum'='1')
+  res<- GET(url,query=query)
+  
+  if((content(res)$found)!=0){
+    found<-rbind(found,data.frame(content(res))[4:13])
+  } else{
+    not_found = data.frame(postcode)
+  }
+}
+```
+
+Next, the code chunk below will be used to combine both *found* and *not_found* data.frames into a single tibble data.frame called *merged*. At the same time, we will write *merged* and *not_found* tibble data.frames into two separate csv files called *schools* and *not_found* respectively.
+
+```{r}
+#| eval: false
+merged = merge(csv, found, by.x = 'postal_code', by.y = 'results.POSTAL', all = TRUE)
+write.csv(merged, file = "data/aspatial/schools.csv")
+write.csv(not_found, file = "data/aspatial/not_found.csv")
+```
+
+::: callout-note
+## Do it yourself!
+
+-   With the help of Google Map, located the location information of the ungeocoded school by using it's postcode.
+
+-   Update the and fields of the ungeocoded record in manually.`results.LATITUDE results.LONGITUDE schoolss.csv`
+:::
+
+### **Tidying schools data.frame**
+
+In this sub-section, you will import *schools.csv* into R environment and at the same time tidying the data by selecting only the necessary fields as well as rename some fields.
+
+Using the steps you learned in Hands-on Exercise 1, perform the following tasks:
+
+-   import *schools.csv* in R environment as an tibble data.frame called *schools*,
+
+-   rename *results.LATITUDE* and *results.LONGITUDE* to *latitude* and *longitude* respectively,
+
+-   retain only *postal_code*, *school_name*, *latitude* and *longitude* in schools tibble data.frame.
+
+```{r}
+schools <- read_csv("data/aspatial/schools.csv")
+
+schools <- schools %>%
+  rename(latitude = "results.LATITUDE",
+         longitude = "results.LONGITUDE") %>%
+  dplyr::select(postal_code, school_name, latitude, longitude)
+```
+
+### **Converting an aspatial data into sf tibble data.frame**
+
+Next, you will convert schools tibble data.frame data into a simple feature tibble data.frame called *schools_sf* by using values in latitude and longitude fields.
+
+Refer to [st_as_sf()](https://r-spatial.github.io/sf/reference/st_as_sf.html) of sf package.
+
+```{r}
+schools_sf <- st_as_sf(schools, 
+                       coords = c("longitude", "latitude"),
+                       crs=4326) %>%
+  st_transform(crs = 3414)
+```
+
+### **Plotting a point simple feature layer**
+
+To ensure that *schools* sf tibble data.frame has been projected and converted correctly, you can plot the schools point data for visual inspection.
+
+First, let us import *MPSZ-2019* shapefile into R environment and save it as an sf tibble data.frame called *mpsz*.
+
+```{r}
+mpsz <- st_read(dsn = "data/geospatial/",
+                layer = "MPSZ-2019") %>%
+  st_transform(crs = 3414)
+```
+
+#### Do it yourself!
+
+Using the steps you learned in previous exercises, create a point symbol map showing the location of schools with OSM as the background map.
+
+```{r}
+tmap_options(check.and.fix = TRUE)
+tm_shape(mpsz) +
+  tm_polygons() +
+tm_shape(schools_sf) +
+  tm_dots()
+```
+
+### **Performing point-in-polygon count process**
+
+Next, we will count the number of schools located inside the planning subzones by using of Base and of sf package.lengths()st_intersects().
+
+```{r}
+mpsz$`SCHOOL_COUNT`<- lengths(
+  st_intersects(
+    mpsz, schools_sf))
+```
+
+It is always good practice to examine the summary statistics of the derived variables.
+
+```{r}
+summary(mpsz$SCHOOL_COUNT)
+```
+
+::: callout-important
+The summary statistics above reveals that there are excessive 0 values in SCHOOL_COUNT field. If is going to use to transform this field, additional step is required to ensure that all 0 will be replaced with a value between 0 and 1 but not 0 neither 1.`log()`
+:::
+
+## **Data Integration and Final Touch-up**
+
+Using the steps you learned in earlier sub-sections, count the number of Business points in each planning subzone.
+
+```{r}
+business_sf <- st_read(dsn = "data/geospatial",
+                      layer = "Business")
+```
+
+```{r}
+tmap_options(check.and.fix = TRUE)
+tm_shape(mpsz) +
+  tm_polygons() +
+tm_shape(business_sf) +
+  tm_dots()
+```
+
+```{r}
+mpsz$`BUSINESS_COUNT`<- lengths(
+  st_intersects(
+    mpsz, business_sf))
+```
+
+```{r}
+summary(mpsz$BUSINESS_COUNT)
+```
+
+Now, we will continue our journey of calibrating Spatial Interaction Models by using propulsiveness and attractiveness variables prepared earlier.
+
+First, import *flow_data_tidy.rds*: weekday morning peak passenger flows at planning subzone level.
+
+```{r}
+flow_data <- read_rds("data/rds/flow_data_tidy.rds")
+```
+
+```{r}
+glimpse(flow_data)
+```
+
+Notice that this sf tibble data.frame includes two additional fields namely: *SCHOOL_COUNT* and *BUSINESS_COUNT*. Both of them will be used as attractiveness variables when calibrating origin constrained SIM.
+
+The code chunk below is used to display the first five columns and rows of *flow_data*.
+
+```{r}
+kable(head(flow_data[, 1:5], n = 5))
+```
+
+::: callout-important
+Notice that this data.frame include intra-zonal flow.
+:::
+
+## **Preparing inter-zonal flow data**
+
+In general, we will calibrate separate Spatial Interaction Models for inter- and intra-zonal flows. In this hands-on exercise, we will focus our attention on inter-zonal flow. Hence, we need to exclude the intra-zonal flow from *flow_data*.
+
+First, two new columns called *FlowNoIntra* and *offset* will be created by using the code chunk below.
+
+```{r}
+flow_data$FlowNoIntra <- ifelse(
+  flow_data$ORIGIN_SZ == flow_data$DESTIN_SZ, 0, flow_data$MORNING_PEAK
+)
+flow_data$offset <- ifelse(
+  flow_data$ORIGIN_SZ == flow_data$DESTIN_SZ, 0.000001, 1
+)
+
+inter_zonal_flow <- flow_data %>%
+  filter(FlowNoIntra > 0)
+
+inter_zonal_flow <- inter_zonal_flow %>%
+  rename("DIST" = "dist",
+         "TRIPS" = "MORNING_PEAK")
+```
+
+## **Calibrating Spatial Interaction Models**
+
+In this section, we will focus on calibrating an origin constrained SIM and a doubly constrained by using *flow_data* prepared.
+
+### **Origin- (Production-) constrained Model**
+
+Figure below shows the general formula of the origin-constrained model.
+
+![](images/image2.jpg){fig-align="left" width="504"}
+
+Code chunk below shows the calibration of the model by using [`glm()`](https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/glm) of R and *flow_data*.
+
+```{r}
+orcSIM_Poisson <- glm(formula = TRIPS ~ 
+                        ORIGIN_SZ + 
+                        log(SCHOOL_COUNT) + 
+                        log(RETAIL_COUNT) + 
+                        log(DIST) - 1,
+                      family = poisson(link = "log"),
+                      data = inter_zonal_flow,
+                      na.action = na.exclude)
+
+summary(orcSIM_Poisson)
+```
+
+::: callout-tip
+## Things to learn from the code chunk above
+
+-   For origin-constrained model, only explanatory variables representing the attractiveness at the destinations will be used.
+
+-   All the explanatory variables including distance will be log transformed.
+
+-   *ORIGIN_SZ* is used to model 𝜇~𝑖~ . It must be in categorical data type.
+
+-   It is important to note that -1 is added in the equation after the distance variable. The -1 serves the purpose of removing the intercept that by default, glm will insert into the model.
+:::
+
+::: callout-tip
+## What can we learn from the report above?
+
+-   the ⍺~1~ and ⍺~2~ of *SCHOOL_COUNT* and *RETAIL_COUNT* are 0.4755516 and 0.1796905 respectively.
+
+-   𝛽, the distance decay parameter is -1.6929522
+
+-   there are a series of parameters which are the vector of 𝜇~𝑖~ values associated with the origin constraints.
+:::
+
+### **Goodness of fit**
+
+In statistical modelling, the next question we would like to answer is how well the proportion of variance in the dependent variable (i.e. TRIPS) that can be explained by the explanatory variables.
+
+In order to provide answer to this question, R-squared statistics will be used. However, R-squared is not an output of `glm()`. Hence we will write a function called `CalcRSquared` by using the code chunk below.
+
+```{r}
+CalcRSquared <- function(observed, estimated){
+  r <- cor(observed, estimated)
+  R2 <- r^2
+  R2
+}
+```
+
+Now, we can examine how the constraints hold for destinations this time.
+
+```{r}
+CalcRSquared(orcSIM_Poisson$data$TRIPS, orcSIM_Poisson$fitted.values)
+```
+
+With reference to the R-Squared above, we can conclude that the model accounts for about 44% of the variation of flows in the systems. Not bad, but not brilliant either.
+
+### **Doubly constrained model**
+
+In this section, we will fit a doubly constrained SIM by using the general formula shown below:
+
+![](images/image4.jpg){width="584"}
+
+```{r}
+dbcSIM_Poisson <- glm(formula = TRIPS ~
+                        ORIGIN_SZ + 
+                        DESTIN_SZ + 
+                        log(DIST),
+                      family = poisson(link = "log"),
+                      data = inter_zonal_flow, 
+                      na.action = na.exclude)
+
+
+summary(dbcSIM_Poisson)
+```
+
+::: callout-important
+It is important to note that there is a slight change of the code chunk. I have removed the -1 which means that an intercept will appear in the model again. This is not because I want an intercept as it makes the origin and destination coefficients harder to interpret, rather the -1 cheat for removing the intercept only works with one factor level but in double-constrained model we have two factor levels, namely: origins and destinations.
+:::
+
+Next, let us examine how well the proportion of variance in the dependent variable (i.e. TRIPS) that can be explained by the explanatory variables.
+
+```{r}
+CalcRSquared(dbcSIM_Poisson$data$TRIPS, dbcSIM_Poisson$fitted.values)
+```
+
+Notice that there is a relatively greater improvement in the R-Squared value.
+
+## **Model comparison**
+
+### **Statistical measures**
+
+Another useful model performance measure for continuous dependent variable is [Root Mean Squared Error](https://towardsdatascience.com/what-does-rmse-really-mean-806b65f2e48e). In this sub-section, you will learn how to use [`compare_performance()`](https://easystats.github.io/performance/reference/compare_performance.html) of [**performance**](https://easystats.github.io/performance/) package
+
+First of all, let us create a list called *model_list* by using the code chunk below.
+
+```{r}
+model_list <- list(originConstrained=orcSIM_Poisson,
+                   doublyConstrained=dbcSIM_Poisson)
+```
+
+Next, we will compute the RMSE of all the models in *model_list* file by using the code chunk below.
+
+```{r}
+compare_performance(model_list, metrics = "RMSE")
+```
+
+The print above reveals that doubly constrained SIM is the best model among the two SIMs because it has the smallest RMSE value of 1906.694.
+
+### **Visualising fitted values**
+
+In this section, you will learn how to visualise the observed values and the fitted values.
+
+Firstly we will extract the fitted values from Origin-constrained Model by using the code chunk below.
+
+```{r}
+df <- as.data.frame(orcSIM_Poisson$fitted.values) %>%
+  round(digits = 0)
+```
+
+Next, we will append the fitted values into *inter_zonal_flow* data frame by using the code chunk below.
+
+```{r}
+inter_zonal_flow <- inter_zonal_flow %>%
+  cbind(df) %>%
+  rename(orcTRIPS = "orcSIM_Poisson.fitted.values")
+```
+
+::: callout-tip
+Notice that `rename()` is used to rename the field name and the `$` in the original field name has been replaced with an `.`. This is because R replaced `$` with `.` during the `cbind()`.
+:::
+
+Then, repeat the same step for Doubly Constrained Model (i.e. dbcSIM_Poisson).
+
+```{r}
+df <- as.data.frame(dbcSIM_Poisson$fitted.values) %>%
+  round(digits = 0)
+```
+
+```{r}
+inter_zonal_flow <- inter_zonal_flow %>%
+  cbind(df) %>%
+  rename(dbcTRIPS = "dbcSIM_Poisson.fitted.values")
+```
+
+Next, two scatterplots will be created by using [`geom_point()`](https://ggplot2.tidyverse.org/reference/geom_point.html) and other appropriate functions of [**ggplot2**](https://ggplot2.tidyverse.org/) package.
+
+```{r}
+orc_p <- ggplot(data = inter_zonal_flow,
+                aes(x = orcTRIPS,
+                    y = TRIPS)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  coord_cartesian(xlim=c(0,150000),
+                  ylim=c(0,150000))
+
+dbc_p <- ggplot(data = inter_zonal_flow,
+                aes(x = dbcTRIPS,
+                    y = TRIPS)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  coord_cartesian(xlim=c(0,150000),
+                  ylim=c(0,150000))
+```
+
+Now, we will put all the graphs into a single visual for better comparison by using the code chunk below.
+
+```{r}
+ggarrange(orc_p, dbc_p,
+          ncol = 2,
+          nrow = 1)
+```
