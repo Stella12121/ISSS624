@@ -33,12 +33,12 @@ The specific tasks of this take-home exercise are as follows:
 
 -   With reference to the time intervals provided in the table below, construct an O-D matrix of commuter flows for a time interval of your choice by integrating *Passenger Volume by Origin Destination Bus Stops* and *Bus Stop Location* from [LTA DataMall](https://datamall.lta.gov.sg/content/datamall/en.html). The O-D matrix must be aggregated at the analytics hexagon level
 
-    | Peak hour period             | Bus tap on time |
-    |------------------------------|-----------------|
-    | Weekday morning peak         | 6am to 9am      |
-    | Weekday afternoon peak       | 5pm to 8pm      |
-    | Weekend/holiday morning peak | 11am to 2pm     |
-    | Weekend/holiday evening peak | 4pm to 7pm      |
+    | Peak hour period               | Bus tap on time |
+    |--------------------------------|-----------------|
+    | Weekday afternoon peak         | 6am to 9am      |
+    | Weekday afternoon peak         | 5pm to 8pm      |
+    | Weekend/holiday afternoon peak | 11am to 2pm     |
+    | Weekend/holiday evening peak   | 4pm to 7pm      |
 
 -   Display the O-D flows of the passenger trips by using appropriate geovisualisation methods (not more than 5 maps).
 
@@ -63,7 +63,7 @@ The specific tasks of this take-home exercise are as follows:
 The code chunk below installs and loads the packages will be used into R environment.
 
 ```{r}
-pacman::p_load(sf, sfdep, spdep, tmap, tidyverse, knitr, dplyr, readr, DT, stplanr, performance, ggpubr)
+pacman::p_load(sf, sfdep, spdep, tmap, tidyverse, knitr, dplyr, readr, DT, stplanr, performance, ggpubr, corrplot)
 ```
 
 ### 4.2 The data
@@ -115,13 +115,13 @@ glimpse(odbus)
 
 #### **5.1.2 Extracting the study data**
 
-For the purpose of this exercise, we will extract commuting flows on weekday and between 6 and 9 o'clock(namely, the weekday morning peak).
+For the purpose of this exercise, we will extract commuting flows on weekday and between 17 and 20 o'clock(namely, the weekday afternoon peak).
 
 ```{r}
-odbus6_9 <- odbus %>%
+odbus17_20 <- odbus %>%
   filter(DAY_TYPE == "WEEKDAY") %>%
-  filter(TIME_PER_HOUR >= 6 &
-           TIME_PER_HOUR <= 9) %>%
+  filter(TIME_PER_HOUR >= 17 &
+           TIME_PER_HOUR <= 20) %>%
   group_by(ORIGIN_PT_CODE,
            DESTINATION_PT_CODE) %>%
   summarise(TRIPS = sum(TOTAL_TRIPS))
@@ -188,10 +188,10 @@ busstop_grid <- st_intersection(busstop, honeycomb_grid_sf) %>%
 
 #### **5.3.2 Constructing OD matrix**
 
-Third, we are going to append the grid_id from busstop_grid data frame onto odbus6_9 data frame.
+Third, we are going to append the grid_id from busstop_grid data frame onto odbus17_20 data frame.
 
 ```{r}
-od_data <- left_join(odbus6_9, busstop_grid,
+od_data <- left_join(odbus17_20, busstop_grid,
             by = "ORIGIN_PT_CODE" ) %>%
   rename(ORIGIN_BS = ORIGIN_PT_CODE,
          ORIGIN_SZ = grid_id,
@@ -236,11 +236,11 @@ od_data <- od_data %>%
   rename(DESTIN_SZ = grid_id) %>%
   drop_na() %>%
   group_by(ORIGIN_SZ, DESTIN_SZ) %>%
-  summarise(MORNING_PEAK = sum(TRIPS))
+  summarise(AFTERNOON_PEAK = sum(TRIPS))
 ```
 
 ```{r}
-od_data = filter(od_data, MORNING_PEAK > 0)
+od_data = filter(od_data, AFTERNOON_PEAK > 0)
 ```
 
 ### **5.4 Visualising Spatial Interaction**
@@ -279,14 +279,14 @@ tm_shape(mpsz) +
 tm_shape(bus_count_hex) +
   tm_polygons() +
 flowLine %>%  
-  filter(MORNING_PEAK >= 5000) %>%
+  filter(AFTERNOON_PEAK >= 5000) %>%
 tm_shape() +
-  tm_lines(lwd = "MORNING_PEAK",
+  tm_lines(lwd = "AFTERNOON_PEAK",
            style = "quantile",
            scale = c(0.3, 3, 7, 11, 15, 19, 23, 27),
            n = 6,
            alpha = 0.3) +
-tm_layout(main.title = 'O-D Flow of Weekday Morning Peak' ,
+tm_layout(main.title = 'O-D Flow of Weekday afternoon Peak' ,
             main.title.position = "center")
 ```
 
@@ -294,7 +294,7 @@ In this flow map, thicker line means more trips between the two hexagons. From a
 
 ## 6 Assemble propulsive and attractiveness variables
 
-In this section, we will try to find out the factors affecting the passenger flows of bus during weekday morning peak.
+In this section, we will try to find out the factors affecting the passenger flows of bus during weekday afternoon peak.
 
 ### 6.1 Constructing distance matrix
 
@@ -356,8 +356,8 @@ The code chunk below is used to rename the origin and destination fields.
 
 ```{r}
 distPair <- distPair %>%
-  rename(ORIGIN_SZ = Var1,   #ORIGIN_GRID_ID
-         DESTIN_SZ = Var2)   #DESTIN_GRID_ID
+  rename(ORIGIN_SZ = Var1,  
+         DESTIN_SZ = Var2)   
 
 distPair %>% head()
 ```
@@ -379,7 +379,7 @@ Next, we will compute the total passenger trip between and within planning subzo
 ```{r}
 flow_data <- od_data %>%
   group_by(ORIGIN_SZ, DESTIN_SZ) %>% 
-  summarize(TRIPS = sum(MORNING_PEAK)) 
+  summarize(TRIPS = sum(AFTERNOON_PEAK)) 
 ```
 
 #### 6.2.1 **Separating intra-flow from passenger volume df**
@@ -424,14 +424,13 @@ First, let us learn about the definition of the two variables.
 -   **attractiveness factors:** The factors that "pull" or attract people to a destination.These are typically features or characteristics of an area that draw people in, such as shopping centers, tourist attractions, educational institutions, or recreational facilities.
 :::
 
-We will use `Business`, `Schools` and `hdb` datasets to derive **propulsive factors**; `entern` , `F&B` and `Liesure&Recreation` datasets to derive **attractiveness factors**.
+We will use `Business`, `Schools` and `hdb` datasets to derive **propulsive factors**; `entern` and `F&B` datasets to derive **attractiveness factors**.
 
 -   Business: locations of business establishments
 -   Schools: the information of schools including the location
 -   hdb: a geocoded version of *HDB Property Information* data from [data.gov](https://beta.data.gov.sg/).
 -   entern: entertainments
 -   F&B: food and beverage outlets
--   Leisure&Recreation: the information about leisure and recreation centres
 
 Next, we are going to import those datasets.
 
@@ -554,7 +553,276 @@ summary(bus_count_hex$`HDB_COUNT`)
 
 ### entertainment
 
+```{r}
+entertainment_sf <- st_read(dsn = "data/geospatial",
+                    layer = "entertn") %>%
+          st_transform(crs = 3414)
+```
+
+```{r}
+tmap_options(check.and.fix = TRUE)
+tm_shape(mpsz) +
+  tm_polygons() +
+tm_shape(bus_count_hex) +
+  tm_polygons() +
+tm_shape(entertainment_sf) +
+  tm_dots()
+```
+
+```{r}
+bus_count_hex$`ENTERN_COUNT`<- lengths(
+  st_intersects(
+    bus_count_hex, entertainment_sf))
+```
+
+```{r}
+summary(bus_count_hex$`ENTERN_COUNT`)
+```
+
 ### F&B
 
-### Leisure&Recreation
+```{R}
+fb_sf <- st_read(dsn = "data/geospatial",
+               layer = "F&B") %>%
+          st_transform(crs = 3414)
+```
+
+```{r}
+tmap_options(check.and.fix = TRUE)
+tm_shape(mpsz) +
+  tm_polygons() +
+tm_shape(bus_count_hex) +
+  tm_polygons() +
+tm_shape(fb_sf) +
+  tm_dots()
+```
+
+```{r}
+bus_count_hex$`FB_COUNT`<- lengths(
+  st_intersects(
+    bus_count_hex, fb_sf))
+```
+
+```{r}
+summary(bus_count_hex$`FB_COUNT`)
+```
 :::
+
+The data will be combined together.
+
+```{r}
+bus_count_hex_tidy <- bus_count_hex %>%
+  st_drop_geometry() %>%
+  select(grid_id, SCHOOL_COUNT, BUSINESS_COUNT, HDB_COUNT, FB_COUNT, ENTERN_COUNT)
+```
+
+```{r}
+bus_count_hex_tidy$grid_id <- as.factor(bus_count_hex_tidy$grid_id)
+flow_data1 <- flow_data1 %>%
+  left_join(bus_count_hex_tidy,
+            by = c("DESTIN_SZ" = "grid_id"))
+```
+
+#### 6.3.1 Checking for 0 values
+
+```{r}
+summary(flow_data1)
+```
+
+From the above, it is clear that there are 0 values in most of the variables. The code chunk below will be used to replace them to 0.99.
+
+```{r}
+flow_data1$SCHOOL_COUNT <- ifelse(
+  flow_data1$SCHOOL_COUNT == 0,
+  0.99, flow_data1$SCHOOL_COUNT)
+flow_data1$BUSINESS_COUNT <- ifelse(
+  flow_data1$BUSINESS_COUNT == 0,
+  0.99, flow_data1$BUSINESS_COUNT)
+flow_data1$HDB_COUNT <- ifelse(
+  flow_data1$HDB_COUNT == 0,
+  0.99, flow_data1$HDB_COUNT)
+flow_data1$FB_COUNT <- ifelse(
+  flow_data1$FB_COUNT == 0,
+  0.99, flow_data1$FB_COUNT)
+flow_data1$ENTERN_COUNT <- ifelse(
+  flow_data1$ENTERN_COUNT == 0,
+  0.99, flow_data1$ENTERN_COUNT)
+```
+
+Check again to make sure that all 0 values are replaced.
+
+```{r}
+summary(flow_data1)
+```
+
+Next, remove the duplicates.
+
+```{r}
+duplicate <- flow_data1 %>%
+  group_by_all() %>%
+  filter(n()>1) %>%
+  ungroup()
+
+flow_data1 <- unique(flow_data1)
+
+```
+
+Then, change the data type of ORIGIN_SZ and DESTIN_SZ to character.
+
+```{r}
+flow_data1$ORIGIN_SZ <- as.character(flow_data1$ORIGIN_SZ)
+flow_data1$DESTIN_SZ <- as.character(flow_data1$DESTIN_SZ)
+```
+
+Inter-zonal flow will be selected from flow_data1 and save into a new output data.frame called *inter_zonal_flow* by using the code chunk below.
+
+```{r}
+inter_zonal_flow <- flow_data1 %>%
+  filter(FlowNoIntra > 0)
+```
+
+```{r}
+summary(inter_zonal_flow)
+```
+
+## 7 Correlation Analysis
+
+This step aims to avoid including explanatory variables that are highly correlated. The code chunk below will be used to show the correlation matrix.
+
+```{r}
+correlation_matrix <- cor(inter_zonal_flow[,7:11])
+
+corrplot(correlation_matrix, method = "color", type = "upper", order = "hclust",
+         tl.col = "black", tl.srt = 45, addCoef.col = "black")
+```
+
+Since the coefficients are all less than 0.6, we will include all the variables in our model.
+
+## 8 Calibrating SIM model
+
+### 8.1 Unconstrained
+
+```{r}
+uncSIM <- glm(formula = TRIPS ~ 
+                  log(SCHOOL_COUNT)+
+                  log(BUSINESS_COUNT)+
+                  log(HDB_COUNT)+
+                  log(FB_COUNT)+
+                  log(ENTERN_COUNT)+
+                  log(dist),
+              family = poisson(link = "log"),
+              data = inter_zonal_flow,
+              na.action = na.exclude)
+uncSIM
+```
+
+#### 8.1.2 Goodness of fit
+
+In order to measure how much variation of the trips can be accounted by the model we will write a function to calculate R-Squared value as shown below.
+
+```{r}
+CalcRSquared <- function(observed,estimated){
+  r <- cor(observed,estimated)
+  R2 <- r^2
+  R2
+}
+```
+
+Next, we will compute the R-squared of the unconstrained SIM by using the code chunk below.
+
+```{r}
+CalcRSquared(uncSIM$data$TRIPS, uncSIM$fitted.values)
+```
+
+### 8.2 Origin constrained
+
+```{r}
+options(max.print = 10000)
+orcSIM <- glm(formula = TRIPS ~ 
+                  ORIGIN_SZ +
+                  log(SCHOOL_COUNT)+
+                  log(BUSINESS_COUNT)+
+                  log(HDB_COUNT)+
+                  log(FB_COUNT)+
+                  log(ENTERN_COUNT)+
+                  log(dist) - 1,
+              family = poisson(link = "log"),
+              data = inter_zonal_flow,
+              na.action = na.exclude)
+summary(orcSIM)
+```
+
+```{r}
+CalcRSquared(orcSIM$data$TRIPS, orcSIM$fitted.values)
+```
+
+## 9 Model Comparison
+
+First of all, let us create a list called *model_list* by using the code chun below.
+
+```{r}
+model_list <- list(unconstrained=uncSIM,
+                   originConstrained=orcSIM)
+```
+
+Next, we will compute the RMSE of all the models in *model_list* file by using the code chunk below.
+
+```{r}
+compare_performance(model_list,
+                    metrics = "RMSE")
+```
+
+The print above reveals that origin constrained SIM is the best model because it has the smallest RMSE value of 1246.686.
+
+### 9.1 Visualising fitted
+
+Firstly we will extract the fitted values from each model by using the code chunk below.
+
+```{r}
+df <- as.data.frame(uncSIM$fitted.values) %>%
+  round(digits = 0)
+```
+
+Next, we will join the values to inter_zonal_flow data frame.
+
+```{r}
+inter_zonal_flow <- inter_zonal_flow %>%
+  cbind(df) %>%
+  rename(uncTRIPS = "uncSIM$fitted.values")
+```
+
+Repeat the same step by for Origin Constrained SIM.
+
+```{r}
+df1 <- as.data.frame(orcSIM$fitted.values) %>%
+  round(digits = 0)
+
+inter_zonal_flow <- inter_zonal_flow %>%
+  cbind(df1) %>%
+  rename(orcTRIPS = "orcSIM$fitted.values")
+```
+
+```{r}
+unc_p <- ggplot(data = inter_zonal_flow,
+                aes(x = uncTRIPS,
+                    y = TRIPS)) +
+  geom_point() +
+  geom_smooth(method = lm)
+
+orc_p <- ggplot(data = inter_zonal_flow,
+                aes(x = orcTRIPS,
+                    y = TRIPS)) +
+  geom_point() +
+  geom_smooth(method = lm)
+
+ggarrange(unc_p, orc_p, 
+          ncol = 2)
+```
+
+According to the R-squared, origin constrained SIM has a larger value of 0.4880072; For RMSE, origin constrained SIM is also better than unconstrained model because it has the smallest RMSE value of 1246.686. Combined with model visualization, we can conclude that origin constrained is the best model.
+
+Then, we take a look at the coefficient in origin constrained SIM:
+
+![](images/origin.png){width="287"}
+
+From the results, we can see that HDB_COUNT has the strongest association with TRIPS, followed by ENTERN_COUNT and FB_COUNT. Which reveals that home, entertainment venues and restaurants are the most attractive factors affecting bus trips during weekday afternoon peak.
